@@ -40,9 +40,9 @@ class Monitor extends EventEmitter {
         setInterval(async () => {
             const warningThresholds = await this.getWarningThresholds();
             const currentServerStats = await Promise.all([
-                this.server.type == "Linux" ? this.getNetdataCPU() : this.getWindowsStat("cpu"),
-                this.server.type == "Linux" ? this.getNetdataRAM() : this.getWindowsStat("ram"),
-                this.server.type == "Linux" ? this.getNetdataDisk() : this.getWindowsStat("disk"),
+                this.server.type == "Linux" ? this.getNetdataStat("cpu") : this.getWindowsStat("cpu"),
+                this.server.type == "Linux" ? this.getNetdataStat("ram") : this.getWindowsStat("ram"),
+                this.server.type == "Linux" ? this.getNetdataStat("disk") : this.getWindowsStat("disk"),
                 this.getPing()
             ]);
 
@@ -269,62 +269,62 @@ class Monitor extends EventEmitter {
         })
     }
 
-    getNetdataCPU(originalResolve, retryNumber = 0) {
+    getNetdataStat(context, originalResolve, retryNumber = 0) {
         return new Promise((Resolve, Reject) => {
+            const contexts = {
+                "cpu": "system.cpu",
+                "ram": "system.ram",
+                "disk": "disk.space"
+            }
+
+
             if (originalResolve) Resolve = originalResolve;
-            if (retryNumber >= 3) return originalResolve({ type: "cpu", values: null });
-            axios.get(`http://${this.server.address}:19999/api/v2/data?points=239&format=json2&time_group=average&time_resampling=0&after=${(Date.now() - 10000) / 1000}&before=${(Date.now() + 5000) / 1000}&group_by[0]=dimension&group_by_label[0]=&aggregation[0]=avg&options=jsonwrap|nonzero|flip|ms|jw-anomaly-rates|minify&contexts=*&scope_contexts=system.cpu&scope_nodes=*&nodes=*&instances=*&dimensions=*&labels=`).then(response => {
+            if (!contexts[context]) throw new Error(`Invalid context ${context}`);
+            if (retryNumber >= 3) return originalResolve({ type: context, values: null });
+
+            axios.get(`http://${this.server.address}:19999/api/v2/data?points=300&format=json2&time_group=average&time_resampling=0&after=${(Date.now() - 5000) / 1000}&before=${(Date.now() + 5000) / 1000}&group_by[0]=dimension&group_by_label[0]=&aggregation[0]=avg&options=jsonwrap|nonzero|flip|ms|jw-anomaly-rates|minify&contexts=*&scope_contexts=${contexts[context]}&scope_nodes=*&nodes=*&instances=*&dimensions=*&labels=`).then(response => {
                 response = response?.data;
-        
+
                 if (response && response?.result) {
                     response = mapResultLabelsToData(response.result);
 
-                    let usage = 0;
+                    switch (context) {
+                        case "cpu":
+                            let usage = 0;
 
-                    Object.keys(response).forEach(key => {
-                        if (typeof response[key] == "object" && typeof response[key]?.[0] == "number") {
-                            usage += response[key][0];
-                        }
-                    })
-
-    
-                    Resolve({ type: "cpu", values: { usage, percentage: usage } });
-                } else {
-                    setTimeout(() => this.getNetdataCPU(originalResolve ? originalResolve : Resolve, retryNumber + 1), 1000);
-                }
-            }).catch(error => {
-                if (error.code == "ETIMEDOUT" || error.code == "ECONNREFUSED") {
-                    console.debug(`[${error.code}] Error while establishing a connection to the netdata api on ${this.server.hostname}!`);
-                } else {
-                    console.debug(`[${error.code}] Encountered an unknown error while connecting to netdata api on ${this.server.hostname}!`);
-                }
-
-                Resolve({ type: "cpu", values: null });
-            })
+                            Object.keys(response).forEach(key => {
+                                if (typeof response[key] == "object" && typeof response[key]?.[0] == "number") {
+                                    usage += response[key][0];
+                                }
+                            })
             
-        })
-    }
-
-    getNetdataRAM(originalResolve, retryNumber = 0) {
-        return new Promise((Resolve, Reject) => {
-            if (originalResolve) Resolve = originalResolve;
-            if (retryNumber >= 3) return originalResolve({ type: "ram", values: null });
-
-            axios.get(`http://${this.server.address}:19999/api/v2/data?points=300&format=json2&time_group=average&time_resampling=0&after=${(Date.now() - 5000) / 1000}&before=${(Date.now() + 5000) / 1000}&group_by[0]=dimension&group_by_label[0]=&aggregation[0]=avg&options=jsonwrap|nonzero|flip|ms|jw-anomaly-rates|minify&contexts=*&scope_contexts=system.ram&scope_nodes=*&nodes=*&instances=*&dimensions=*&labels=*`).then(response => {
-                response = response?.data;
-                if (response && response?.result) {
-                    response = mapResultLabelsToData(response.result);
-                    if (["free", "used", "cached", "buffers"].every(required => Object.keys(response).includes(required))) {
-                        const totalRAM = Number(((response["free"][0] + response["used"][0] + response["cached"][0] + response["buffers"][0]) / 1024).toString().slice(0, 4));
-                        const usedRAM = Number(((response["used"][0] + response["buffers"][0]) / 1024).toString().slice(0, 4));
-        
-                        Resolve({ type: "ram", values: { usage: usedRAM, total: totalRAM, percentage: (usedRAM / totalRAM) * 100 }});
-                    } else {
-                        console.debug("Invalid values for RAM response, retrying..");
-                        setTimeout(() => this.getNetdataRAM(originalResolve ? originalResolve : Resolve, retryNumber + 1), 1000);
+                            Resolve({ type: "cpu", values: { usage, percentage: usage } });
+                            break;
+                        case "ram":
+                            if (["free", "used", "cached", "buffers"].every(required => Object.keys(response).includes(required))) {
+                                const totalRAM = Number(((response["free"][0] + response["used"][0] + response["cached"][0] + response["buffers"][0]) / 1024).toString().slice(0, 4));
+                                const usedRAM = Number(((response["used"][0] + response["buffers"][0]) / 1024).toString().slice(0, 4));
+                
+                                Resolve({ type: "ram", values: { usage: usedRAM, total: totalRAM, percentage: (usedRAM / totalRAM) * 100 }});
+                            } else {
+                                console.debug("Invalid values for RAM response, retrying..");
+                                setTimeout(() => this.getNetdataRAM(originalResolve ? originalResolve : Resolve, retryNumber + 1), 1000);
+                            }
+                            break;
+                        case "disk":
+                            if (["reserved for root", "avail", "used"].every(required => Object.keys(response).includes(required))) {
+                                const totalDiskSpace = Number((response["reserved for root"][0] + response["avail"][0] + response["used"][0]).toString().slice(0, 4));
+                                const usedDiskSpace = Number((response["reserved for root"][0] + response["used"][0]).toString().slice(0, 4));
+                
+                                Resolve({ type: "disk", values: { usage: usedDiskSpace, total: totalDiskSpace, percentage: (usedDiskSpace / totalDiskSpace) * 100 }});
+                            } else {
+                                console.debug("Invalid values for disk response, retrying..");
+                                setTimeout(() => this.getNetdataDisk(originalResolve ? originalResolve : Resolve, retryNumber + 1), 1000);
+                            }
+                            break;
                     }
                 } else {
-                    console.debug("Invalid values for RAM response, retrying..");
+                    console.debug(`Invalid values for ${context} response, retrying..`);
                     setTimeout(() => this.getNetdataRAM(originalResolve ? originalResolve : Resolve, retryNumber + 1), 1000);
                 }
             }).catch(error => {
@@ -334,40 +334,7 @@ class Monitor extends EventEmitter {
                     console.debug(`[${error.code}] Encountered an unknown error while connecting to netdata api on ${this.server.hostname}!`);
                 }
 
-                Resolve({ type: "ram", values: null });
-            })
-        })
-    }
-    
-    getNetdataDisk(originalResolve, retryNumber = 0) {
-        return new Promise((Resolve, Reject) => {
-            if (originalResolve) Resolve = originalResolve;
-            if (retryNumber >= 3) return originalResolve({ type: "disk", values: null });
-            
-            axios.get(`http://${this.server.address}:19999/api/v2/data?points=230&format=json2&time_group=average&time_resampling=0&after=${(Date.now() - 1000) / 1000}&before=${(Date.now() + 5000) / 1000}&group_by[0]=dimension&group_by_label[0]=&aggregation[0]=sum&options=jsonwrap|nonzero|flip|ms|jw-anomaly-rates|minify&contexts=*&scope_contexts=disk.space&scope_nodes=*&nodes=*&instances=*&dimensions=*&labels=*`).then(response => {
-                response = response?.data;
-                if (response && response?.result) {
-                    response = mapResultLabelsToData(response.result);
-                    if (["reserved for root", "avail", "used"].every(required => Object.keys(response).includes(required))) {
-                        const totalDiskSpace = Number((response["reserved for root"][0] + response["avail"][0] + response["used"][0]).toString().slice(0, 4));
-                        const usedDiskSpace = Number((response["reserved for root"][0] + response["used"][0]).toString().slice(0, 4));
-        
-                        Resolve({ type: "disk", values: { usage: usedDiskSpace, total: totalDiskSpace, percentage: (usedDiskSpace / totalDiskSpace) * 100 }});
-                    } else {
-                        console.debug("Invalid values for disk response, retrying..");
-                        setTimeout(() => this.getNetdataDisk(originalResolve ? originalResolve : Resolve, retryNumber + 1), 1000);
-                    }
-                } else {
-                    console.debug("Invalid values for disk response, retrying..");
-                    setTimeout(() => this.getNetdataDisk(originalResolve ? originalResolve : Resolve, retryNumber + 1), 1000);
-                }
-            }).catch(error => {
-                if (error.code == "ETIMEDOUT" || error.code == "ECONNREFUSED") {
-                    console.debug(`[${error.code}] Error while establishing a connection to the netdata api on ${this.server.hostname}!`);
-                } else {
-                    console.debug(`[${error.code}] Encountered an unknown error while connecting to netdata api on ${this.server.hostname}!`);
-                }
-                Resolve({ type: "disk", values: null });
+                Resolve({ type: context, values: null });
             })
         })
     }
