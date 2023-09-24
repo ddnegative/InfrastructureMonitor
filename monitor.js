@@ -1,12 +1,13 @@
 const sql = require("mysql");
 const axios = require("axios");
-const crypto = require("crypto");
+const crypto  = require("crypto");
 const ping = require("ping");
 const { EventEmitter } = require("events");
 
 require("dotenv").config();
 
-if (process.env?.DEBUG) debug = true;
+debug = false;
+if (process.env?.DEBUG == "true") debug = true;
 console.debug = debug ? console.log : () => null;
 
 const mapResultLabelsToData = json => {
@@ -277,7 +278,6 @@ class Monitor extends EventEmitter {
                 "disk": "disk.space"
             }
 
-
             if (originalResolve) Resolve = originalResolve;
             if (!contexts[context]) throw new Error(`Invalid context ${context}`);
             if (retryNumber >= 3) return originalResolve({ type: context, values: null });
@@ -451,10 +451,14 @@ database.query("SELECT * FROM servers").then(results => {
                                 break;
                             case "ping":
                                 database.query(`UPDATE serverData SET ping = ${update[key].ping} WHERE serverID = '${server.address}'`);
-                                database.query(`UPDATE serverData SET online = 1 WHERE serverID = '${server.address}'`);
+                                database.query(`UPDATE serverData SET online = ${update[key].ping !== -1 ? "1" : "0"} WHERE serverID = '${server.address}'`);
                                 break;
                         }
                     })
+                } else {
+                    console.debug(`Sending an unalive update for ${server.hostname}`);
+                    database.query(`UPDATE serverData SET ping = ${update[key].ping ?? "-1"} WHERE serverID = '${server.address}'`);
+                    database.query(`UPDATE serverData SET online = 0 WHERE serverID = '${server.address}'`);
                 }
             })
 
