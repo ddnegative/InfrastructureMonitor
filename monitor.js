@@ -457,7 +457,7 @@ database.query("SELECT * FROM servers").then(results => {
                     })
                 } else {
                     console.debug(`Sending an unalive update for ${server.hostname}`);
-                    database.query(`UPDATE serverData SET ping = ${update[key].ping ?? "-1"} WHERE serverID = '${server.address}'`);
+                    database.query(`UPDATE serverData SET ping = -1 WHERE serverID = '${server.address}'`);
                     database.query(`UPDATE serverData SET online = 0 WHERE serverID = '${server.address}'`);
                 }
             })
